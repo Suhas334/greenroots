@@ -91,7 +91,8 @@ class RootScreen extends StatefulWidget {
 class _RootScreenState extends State<RootScreen> {
   final List<TreeRecord> trees = [];
   int selected = 0;
-  bool loaded = true;
+  bool loaded = false;
+  bool storageReady = true;
   @override
   void initState() {
     super.initState();
@@ -100,7 +101,8 @@ class _RootScreenState extends State<RootScreen> {
 
   Future<void> _load() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await SharedPreferences.getInstance()
+          .timeout(const Duration(seconds: 8));
       final raw = prefs.getString('trees_v1');
       if (raw != null && raw.isNotEmpty) {
         final decoded = jsonDecode(raw);
@@ -111,7 +113,7 @@ class _RootScreenState extends State<RootScreen> {
               restored.add(
                   TreeRecord.fromJson(Map<String, dynamic>.from(item as Map)));
             } catch (error) {
-              debugPrint('Skipping invalid tree record: $error');
+              debugPrint('Skipped invalid tree entry: $error');
             }
           }
           trees
@@ -120,20 +122,38 @@ class _RootScreenState extends State<RootScreen> {
         }
       }
     } catch (error, stackTrace) {
-      debugPrint('Unable to load tree records: $error');
+      storageReady = false;
+      debugPrint('Unable to restore tree diary: $error');
       debugPrintStack(stackTrace: stackTrace);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content:
+              Text('Saved trees could not be loaded. Please try restarting.'),
+        ));
+      }
     } finally {
       if (mounted) setState(() => loaded = true);
     }
   }
 
   Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-        'trees_v1', jsonEncode(trees.map((t) => t.toJson()).toList()));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final success = await prefs.setString(
+          'trees_v1', jsonEncode(trees.map((t) => t.toJson()).toList()));
+      if (!success) throw StateError('Local storage rejected the save');
+    } catch (error) {
+      debugPrint('Unable to save tree diary: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not save changes on this device.'),
+        ));
+      }
+    }
   }
 
   void _add(TreeRecord tree) {
+    if (!storageReady) return;
     setState(() {
       trees.insert(0, tree);
       selected = 1;
@@ -142,19 +162,31 @@ class _RootScreenState extends State<RootScreen> {
   }
 
   void _delete(TreeRecord tree) {
+    if (!storageReady) return;
     setState(() => trees.removeWhere((t) => t.id == tree.id));
     _save();
   }
 
   void _toggle(TreeRecord tree) {
+    if (!storageReady) return;
     final index = trees.indexWhere((t) => t.id == tree.id);
     if (index < 0) return;
     setState(() => trees[index] = tree.copyWith(needsCare: !tree.needsCare));
     _save();
   }
 
-  void _openAdd() => Navigator.push(context,
-      MaterialPageRoute<void>(builder: (_) => AddTreeScreen(onSave: _add)));
+  void _openAdd() {
+    if (!storageReady) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'Tree storage is unavailable. Restart the app before editing.'),
+      ));
+      return;
+    }
+    Navigator.push(context,
+        MaterialPageRoute<void>(builder: (_) => AddTreeScreen(onSave: _add)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [
@@ -172,7 +204,7 @@ class _RootScreenState extends State<RootScreen> {
             child: !loaded
                 ? const Center(child: CircularProgressIndicator())
                 : IndexedStack(index: selected, children: pages)),
-        floatingActionButton: selected < 2
+        floatingActionButton: selected < 2 && storageReady
             ? FloatingActionButton(
                 onPressed: _openAdd,
                 backgroundColor: forest,
@@ -180,9 +212,9 @@ class _RootScreenState extends State<RootScreen> {
                 shape: const CircleBorder(),
                 child: const Icon(Icons.add))
             : null,
-        floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         bottomNavigationBar: NavigationBar(
-            height: 75,
+            height: 72,
             selectedIndex: selected,
             indicatorColor: const Color(0xFFDDEBD7),
             backgroundColor: Colors.white,
@@ -216,105 +248,127 @@ class Dashboard extends StatelessWidget {
       required this.trees,
       required this.onAdd,
       required this.onShowTrees});
+
   @override
   Widget build(BuildContext context) {
     final care = trees.where((t) => t.needsCare).length;
+    final healthy = trees.length - care;
     return ListView(
-        padding: const EdgeInsets.fromLTRB(22, 22, 22, 110),
-        children: [
-          Row(children: [
-            const Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text('Hello, Green Guardian 🌿',
-                      style: TextStyle(color: forest, fontSize: 14)),
-                  SizedBox(height: 5),
-                  Text('Grow a greener\ntomorrow.',
-                      style: TextStyle(
-                          fontSize: 29,
-                          fontWeight: FontWeight.w800,
-                          height: 1.13))
-                ])),
-            CircleAvatar(
-                radius: 27,
-                backgroundColor: const Color(0xFFDDEBD7),
-                child: const Icon(Icons.eco, color: forest, size: 29))
-          ]),
-          const SizedBox(height: 24),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
+      children: [
+        Row(children: [
+          const Expanded(
+              child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('WELCOME TO GREENROOTS',
+                  style: TextStyle(
+                      color: forest,
+                      letterSpacing: 1.4,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800)),
+              SizedBox(height: 8),
+              Text('Make every tree\ncount.',
+                  style: TextStyle(
+                      fontSize: 29, height: 1.12, fontWeight: FontWeight.w800)),
+            ],
+          )),
           Container(
-              padding: const EdgeInsets.all(23),
-              decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                      colors: [Color(0xFF225C3B), Color(0xFF629465)]),
-                  borderRadius: BorderRadius.circular(27)),
-              child: Row(children: [
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      const Text('YOUR GREEN IMPACT',
-                          style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                              letterSpacing: 1.3,
-                              fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 12),
-                      Text('${trees.length}',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 53,
-                              fontWeight: FontWeight.w800)),
-                      const Text('Trees recorded',
-                          style: TextStyle(color: Colors.white, fontSize: 17)),
-                      const SizedBox(height: 16),
-                      const Text('Every tree tells a story.',
-                          style: TextStyle(color: Colors.white70, fontSize: 12))
-                    ])),
-                const Icon(Icons.forest, color: Color(0xFFD2E9AF), size: 108)
-              ])),
-          const SizedBox(height: 22),
-          Row(children: [
-            Expanded(
-                child: _Stat(
-                    icon: Icons.spa,
-                    value: '${trees.length - care}',
-                    label: 'Doing well')),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _Stat(
-                    icon: Icons.water_drop_outlined,
-                    value: '$care',
-                    label: 'Needs care'))
+            width: 54,
+            height: 54,
+            decoration: const BoxDecoration(
+                color: Color(0xFFE0EDD8), shape: BoxShape.circle),
+            child: const Icon(Icons.eco_rounded, color: forest, size: 29),
+          ),
+        ]),
+        const SizedBox(height: 24),
+        Container(
+          padding: const EdgeInsets.all(23),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(26),
+            gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF135437), Color(0xFF4D9568)]),
+          ),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Row(children: [
+              Icon(Icons.forest_rounded, color: Color(0xFFD9F0C5), size: 23),
+              SizedBox(width: 8),
+              Text('YOUR GREEN IMPACT',
+                  style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.2)),
+            ]),
+            const SizedBox(height: 18),
+            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              Text('${trees.length}',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 57,
+                      height: 1,
+                      fontWeight: FontWeight.w800)),
+              const SizedBox(width: 15),
+              const Expanded(
+                  child: Text('trees in your\nplantation diary',
+                      style: TextStyle(
+                          color: Colors.white, fontSize: 17, height: 1.3))),
+              const Icon(Icons.park_rounded,
+                  color: Color(0xFFC9E8B4), size: 67),
+            ]),
+            const SizedBox(height: 19),
+            const Text('A greener future starts with one tree.',
+                style: TextStyle(color: Colors.white70, fontSize: 12)),
           ]),
-          const SizedBox(height: 26),
-          const Text('Quick actions',
-              style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-                child: _Action(
-                    icon: Icons.add_circle_outline,
-                    title: 'Plant a tree',
-                    onTap: onAdd)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _Action(
-                    icon: Icons.menu_book_outlined,
-                    title: 'View diary',
-                    onTap: onShowTrees))
-          ]),
-          const SizedBox(height: 27),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Recent plantations',
-                style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
-            TextButton(onPressed: onShowTrees, child: const Text('View all'))
-          ]),
-          if (trees.isEmpty)
-            const EmptyTrees()
-          else
-            ...trees.take(3).map((t) => TreeTile(tree: t, onTap: onShowTrees)),
-        ]);
+        ),
+        const SizedBox(height: 16),
+        Row(children: [
+          Expanded(
+              child: _Stat(
+                  icon: Icons.check_circle_outline,
+                  value: '$healthy',
+                  label: 'Doing well')),
+          const SizedBox(width: 12),
+          Expanded(
+              child: _Stat(
+                  icon: Icons.water_drop_outlined,
+                  value: '$care',
+                  label: 'Needs care')),
+        ]),
+        const SizedBox(height: 24),
+        const Text('Quick actions',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+              child: _Action(
+                  icon: Icons.add_circle_outline,
+                  title: 'Plant a tree',
+                  onTap: onAdd)),
+          const SizedBox(width: 12),
+          Expanded(
+              child: _Action(
+                  icon: Icons.menu_book_outlined,
+                  title: 'View diary',
+                  onTap: onShowTrees)),
+        ]),
+        const SizedBox(height: 26),
+        Row(children: [
+          const Expanded(
+              child: Text('Recent plantations',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800))),
+          TextButton(onPressed: onShowTrees, child: const Text('View all')),
+        ]),
+        const SizedBox(height: 5),
+        if (trees.isEmpty)
+          const EmptyTrees()
+        else
+          ...trees.take(3).map((t) => TreeTile(tree: t, onTap: onShowTrees)),
+      ],
+    );
   }
 }
 
@@ -322,19 +376,25 @@ class _Stat extends StatelessWidget {
   final IconData icon;
   final String value, label;
   const _Stat({required this.icon, required this.value, required this.label});
+
   @override
-  Widget build(BuildContext context) => Card(
-      child: Padding(
-          padding: const EdgeInsets.all(18),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(icon, color: forest, size: 27),
-            const SizedBox(height: 12),
-            Text(value,
-                style:
-                    const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-            Text(label, style: const TextStyle(color: Colors.black54))
-          ])));
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(17),
+        decoration: BoxDecoration(
+            color: Colors.white, borderRadius: BorderRadius.circular(20)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, color: forest, size: 25),
+          const SizedBox(height: 10),
+          Text(value,
+              style:
+                  const TextStyle(fontSize: 28, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+        ]),
+      );
 }
 
 class _Action extends StatelessWidget {
@@ -380,27 +440,62 @@ class TreeTile extends StatelessWidget {
   final TreeRecord tree;
   final VoidCallback onTap;
   const TreeTile({super.key, required this.tree, required this.onTap});
+
   @override
   Widget build(BuildContext context) => Card(
-      margin: const EdgeInsets.only(bottom: 11),
-      child: ListTile(
+        margin: const EdgeInsets.only(bottom: 11),
+        child: InkWell(
           onTap: onTap,
-          contentPadding: const EdgeInsets.all(11),
-          leading: Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                  color: const Color(0xFFE6EEDC),
-                  borderRadius: BorderRadius.circular(14)),
-              child: const Icon(Icons.park, color: forest, size: 32)),
-          title: Text(tree.name,
-              style: const TextStyle(fontWeight: FontWeight.bold)),
-          subtitle: Text(
-              tree.location.isEmpty ? 'Location not specified' : tree.location,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis),
-          trailing: Icon(tree.needsCare ? Icons.water_drop : Icons.check_circle,
-              color: tree.needsCare ? Colors.orange : forest)));
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(children: [
+              Container(
+                  width: 55,
+                  height: 55,
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFE5EFDB),
+                      borderRadius: BorderRadius.circular(16)),
+                  child:
+                      const Icon(Icons.park_rounded, color: forest, size: 31)),
+              const SizedBox(width: 13),
+              Expanded(
+                  child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(tree.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 3),
+                  Text(
+                      tree.location.isEmpty
+                          ? 'Location not specified'
+                          : tree.location,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: Colors.black54, fontSize: 13)),
+                  if (tree.species.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(tree.species,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: forest, fontSize: 12)),
+                  ],
+                ],
+              )),
+              const SizedBox(width: 8),
+              Icon(
+                  tree.needsCare
+                      ? Icons.water_drop_rounded
+                      : Icons.check_circle,
+                  color: tree.needsCare ? Colors.orange : forest),
+            ]),
+          ),
+        ),
+      );
 }
 
 class TreeDiary extends StatefulWidget {
@@ -664,69 +759,197 @@ class _AddTreeScreenState extends State<AddTreeScreen> {
 class Insights extends StatelessWidget {
   final List<TreeRecord> trees;
   const Insights({super.key, required this.trees});
+
   @override
   Widget build(BuildContext context) {
     final care = trees.where((t) => t.needsCare).length;
     final locations = trees
-        .map((t) => t.location.trim())
+        .map((t) => t.location.trim().toLowerCase())
         .where((s) => s.isNotEmpty)
         .toSet()
         .length;
-    return ListView(padding: const EdgeInsets.all(22), children: [
-      const Text('Your Impact',
-          style: TextStyle(fontSize: 29, fontWeight: FontWeight.w800)),
-      const SizedBox(height: 8),
-      const Text('Small steps, greener future.',
-          style: TextStyle(color: Colors.black54)),
-      const SizedBox(height: 22),
-      _Stat(
-          icon: Icons.forest,
-          value: '${trees.length}',
-          label: 'Trees recorded'),
-      _Stat(
-          icon: Icons.check_circle_outline,
-          value: '${trees.length - care}',
-          label: 'Doing well'),
-      _Stat(
-          icon: Icons.water_drop_outlined, value: '$care', label: 'Need care'),
-      _Stat(
-          icon: Icons.place_outlined,
-          value: '$locations',
-          label: 'Recorded locations'),
-      const SizedBox(height: 20),
-      const Text('SDG 15 · Life on Land',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 8),
-      const Text('GreenRoots helps you document tree planting '
-          'and follow up on tree care. These counts are based on your own diary entries, '
-          'not independently verified environmental impact.'),
-    ]);
+    final total = trees.length;
+    final healthy = total - care;
+    final progress = total == 0 ? 0.0 : healthy / total;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 110),
+      children: [
+        const Text('Your Impact',
+            style: TextStyle(fontSize: 29, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 6),
+        const Text('See how your green journey is growing.',
+            style: TextStyle(color: Colors.black54)),
+        const SizedBox(height: 22),
+        Container(
+          padding: const EdgeInsets.all(21),
+          decoration: BoxDecoration(
+              color: const Color(0xFFE2EEDB),
+              borderRadius: BorderRadius.circular(22)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.eco_rounded, color: forest),
+                SizedBox(width: 9),
+                Text('Tree care overview',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+              ]),
+              const SizedBox(height: 13),
+              Text(
+                  total == 0
+                      ? 'Add your first tree to get started.'
+                      : '$healthy of $total trees are doing well',
+                  style: const TextStyle(color: forest, fontSize: 14)),
+              const SizedBox(height: 13),
+              ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 11,
+                      backgroundColor: Colors.white,
+                      color: forest)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 15),
+        Row(children: [
+          Expanded(
+              child: _Stat(
+                  icon: Icons.forest_rounded,
+                  value: '$total',
+                  label: 'Trees recorded')),
+          const SizedBox(width: 12),
+          Expanded(
+              child: _Stat(
+                  icon: Icons.check_circle_outline,
+                  value: '$healthy',
+                  label: 'Doing well')),
+        ]),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+              child: _Stat(
+                  icon: Icons.water_drop_outlined,
+                  value: '$care',
+                  label: 'Needs care')),
+          const SizedBox(width: 12),
+          Expanded(
+              child: _Stat(
+                  icon: Icons.place_outlined,
+                  value: '$locations',
+                  label: 'Locations')),
+        ]),
+        const SizedBox(height: 24),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+              color: Colors.white, borderRadius: BorderRadius.circular(20)),
+          child: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.public, color: forest),
+                SizedBox(width: 9),
+                Text('Life on Land · SDG 15',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+              ]),
+              SizedBox(height: 10),
+              Text(
+                  'Every planted tree matters. Keep a record of your '
+                  'plantations and return regularly to check their care needs.',
+                  style: TextStyle(color: Colors.black87, height: 1.5)),
+              SizedBox(height: 8),
+              Text(
+                  'Statistics reflect your diary entries, not independently '
+                  'verified environmental impact.',
+                  style: TextStyle(
+                      color: Colors.black54, fontSize: 12, height: 1.4)),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
+
   @override
-  Widget build(BuildContext context) =>
-      ListView(padding: const EdgeInsets.all(24), children: const [
-        SizedBox(height: 28),
-        Center(child: Icon(Icons.eco, size: 86, color: forest)),
-        SizedBox(height: 15),
-        Center(
-            child: Text('GreenRoots',
-                style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800))),
-        SizedBox(height: 6),
-        Center(child: Text('Tree Plantation Diary')),
-        SizedBox(height: 28),
-        Card(
-            child: Padding(
-                padding: EdgeInsets.all(22),
-                child: Text(
-                    'Plant today for a greener tomorrow. Record the trees you plant, '
-                    'track their care status, and reflect on your contribution to SDG 15: Life on Land.'))),
-        SizedBox(height: 15),
-        Center(
-            child: Text('Flutter SDG Assignment · 24PA1A05H2',
-                style: TextStyle(color: Colors.black54))),
-      ]);
+  Widget build(BuildContext context) => ListView(
+        padding: const EdgeInsets.fromLTRB(22, 38, 22, 110),
+        children: [
+          Center(
+              child: Container(
+            width: 106,
+            height: 106,
+            decoration: const BoxDecoration(
+                color: Color(0xFFE2EEDB), shape: BoxShape.circle),
+            child: const Icon(Icons.eco_rounded, size: 64, color: forest),
+          )),
+          const SizedBox(height: 20),
+          const Center(
+              child: Text('GreenRoots',
+                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800))),
+          const SizedBox(height: 6),
+          const Center(
+              child: Text('Your personal tree plantation diary',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.black54, fontSize: 14))),
+          const SizedBox(height: 28),
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+                color: Colors.white, borderRadius: BorderRadius.circular(22)),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Grow something meaningful',
+                    style:
+                        TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+                SizedBox(height: 12),
+                Text(
+                    'GreenRoots helps you remember every tree you plant. '
+                    'Save plantation details, check which trees need care, '
+                    'and watch your green journey grow over time.',
+                    style: TextStyle(height: 1.55, fontSize: 14)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+                color: const Color(0xFFE2EEDB),
+                borderRadius: BorderRadius.circular(22)),
+            child: const Row(children: [
+              Icon(Icons.public, color: forest, size: 31),
+              SizedBox(width: 14),
+              Expanded(
+                  child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Inspired by SDG 15',
+                      style: TextStyle(
+                          color: forest,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800)),
+                  SizedBox(height: 3),
+                  Text('Life on Land · Care for nature',
+                      style: TextStyle(color: forest, fontSize: 13)),
+                ],
+              )),
+            ]),
+          ),
+          const SizedBox(height: 30),
+          const Center(
+              child: Text('Plant today. Grow tomorrow.',
+                  style: TextStyle(
+                      color: forest,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700))),
+        ],
+      );
 }
