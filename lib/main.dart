@@ -99,16 +99,32 @@ class _RootScreenState extends State<RootScreen> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('trees_v1');
     try {
-      if (raw != null) {
-        final decoded = jsonDecode(raw) as List<dynamic>;
-        trees.addAll(
-            decoded.map((e) => TreeRecord.fromJson(e as Map<String, dynamic>)));
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('trees_v1');
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          final restored = <TreeRecord>[];
+          for (final item in decoded) {
+            try {
+              restored.add(
+                  TreeRecord.fromJson(Map<String, dynamic>.from(item as Map)));
+            } catch (error) {
+              debugPrint('Skipping invalid tree record: $error');
+            }
+          }
+          trees
+            ..clear()
+            ..addAll(restored);
+        }
       }
-    } catch (_) {/* Keep the app usable if stored data is malformed. */}
-    if (mounted) setState(() => loaded = true);
+    } catch (error, stackTrace) {
+      debugPrint('Unable to load tree records: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    } finally {
+      if (mounted) setState(() => loaded = true);
+    }
   }
 
   Future<void> _save() async {
@@ -641,6 +657,7 @@ class _AddTreeScreenState extends State<AddTreeScreen> {
                     },
                     icon: const Icon(Icons.check),
                     label: const Text('Save tree'))),
+            const SizedBox(height: 32),
           ])));
 }
 
