@@ -26,9 +26,9 @@ class _RootScreenState extends State<RootScreen> {
   bool loaded = false;
   bool storageReady = false;
 
-  Future<void> pendingSave = Future<void>.value();
-
   String? storageError;
+
+  Future<void> pendingSave = Future<void>.value();
 
   @override
   void initState() {
@@ -36,13 +36,16 @@ class _RootScreenState extends State<RootScreen> {
     _load();
   }
 
+  // Load existing trees from local storage.
   Future<void> _load() async {
-    if (mounted) {
-      setState(() {
-        loaded = false;
-        storageError = null;
-      });
+    if (!mounted) {
+      return;
     }
+
+    setState(() {
+      loaded = false;
+      storageError = null;
+    });
 
     try {
       final restored = await storage.load();
@@ -59,17 +62,17 @@ class _RootScreenState extends State<RootScreen> {
         storageReady = true;
         storageError = null;
       });
-    } } catch (error, stackTrace) {
-  debugPrint('GreenRoots storage load failed: $error');
-  debugPrintStack(stackTrace: stackTrace);
+    } catch (error, stackTrace) {
+      debugPrint('GreenRoots storage load failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
 
-  if (mounted) {
-    setState(() {
-      storageReady = false;
-      storageError = 'Storage error:\n$error';
-    });
-  }
-} finally {
+      if (mounted) {
+        setState(() {
+          storageReady = false;
+          storageError = 'Storage error:\n$error';
+        });
+      }
+    } finally {
       if (mounted) {
         setState(() {
           loaded = true;
@@ -78,6 +81,7 @@ class _RootScreenState extends State<RootScreen> {
     }
   }
 
+  // Save changes in sequence to avoid overlapping writes.
   void _persist() {
     if (!storageReady) {
       return;
@@ -88,8 +92,9 @@ class _RootScreenState extends State<RootScreen> {
     pendingSave = pendingSave.then((_) async {
       try {
         await storage.save(snapshot);
-      } catch (error) {
+      } catch (error, stackTrace) {
         debugPrint('GreenRoots storage save failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -104,6 +109,7 @@ class _RootScreenState extends State<RootScreen> {
     });
   }
 
+  // Add a new tree.
   void _add(TreeRecord tree) {
     if (!storageReady) {
       return;
@@ -117,24 +123,28 @@ class _RootScreenState extends State<RootScreen> {
     _persist();
   }
 
+  // Delete a tree.
   void _delete(TreeRecord tree) {
     if (!storageReady) {
       return;
     }
 
     setState(() {
-      trees.removeWhere((t) => t.id == tree.id);
+      trees.removeWhere((item) => item.id == tree.id);
     });
 
     _persist();
   }
 
+  // Update the care status of a tree.
   void _toggle(TreeRecord tree) {
     if (!storageReady) {
       return;
     }
 
-    final index = trees.indexWhere((t) => t.id == tree.id);
+    final index = trees.indexWhere(
+      (item) => item.id == tree.id,
+    );
 
     if (index < 0) {
       return;
@@ -149,6 +159,7 @@ class _RootScreenState extends State<RootScreen> {
     _persist();
   }
 
+  // Open the Add Tree screen.
   void _openAdd() {
     if (!storageReady) {
       _load();
@@ -183,7 +194,9 @@ class _RootScreenState extends State<RootScreen> {
         onDelete: _delete,
         onToggle: _toggle,
       ),
-      Insights(trees: trees),
+      Insights(
+        trees: trees,
+      ),
       const AboutScreen(),
     ];
 
@@ -195,7 +208,7 @@ class _RootScreenState extends State<RootScreen> {
               )
             : storageError != null
                 ? Center(
-                    child: Padding(
+                    child: SingleChildScrollView(
                       padding: const EdgeInsets.all(28),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -206,11 +219,24 @@ class _RootScreenState extends State<RootScreen> {
                             color: forest,
                           ),
                           const SizedBox(height: 16),
-                          Text(
+                          const Text(
+                            'Unable to load saved trees',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SelectableText(
                             storageError!,
                             textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.red,
+                            ),
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 20),
                           FilledButton.icon(
                             onPressed: _load,
                             icon: const Icon(Icons.refresh),
