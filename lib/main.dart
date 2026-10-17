@@ -67,7 +67,7 @@ class GreenRootsApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(
               seedColor: forest, primary: forest, surface: canvas),
           fontFamily: 'Roboto',
-          inputDecorationTheme: InputDecoration(
+          inputDecorationTheme: InputDecorationThemeData(
               filled: true,
               fillColor: Colors.white,
               border: OutlineInputBorder(
