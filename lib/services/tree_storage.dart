@@ -1,94 +1,50 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 
 import '../models/tree_record.dart';
 
+/// Uses Android's native SharedPreferences directly to avoid a broken
+/// shared_preferences plugin binary interface on some release builds.
+/// The native bridge reads the original `flutter.trees_v1` preference.
 class TreeStorage {
   static const String key = 'trees_v1';
+  static const MethodChannel _channel = MethodChannel('greenroots/tree_storage');
 
   Future<List<TreeRecord>> load() async {
-    late final SharedPreferences prefs;
+    final raw = await _channel.invokeMethod<String>('readTrees');
+    if (raw == null || raw.isEmpty) return <TreeRecord>[];
 
+    final dynamic data;
     try {
-      prefs = await SharedPreferences.getInstance();
-    } catch (error, stackTrace) {
-      debugPrint('SharedPreferences initialization failed: $error');
-      debugPrintStack(stackTrace: stackTrace);
-      rethrow;
+      data = jsonDecode(raw);
+    } on FormatException {
+      throw const FormatException('Saved tree diary JSON is damaged. Existing data was not changed.');
     }
-
-    String? raw;
-
-    try {
-      raw = prefs.getString(key);
-    } catch (error, stackTrace) {
-      debugPrint('Reading tree storage failed: $error');
-      debugPrintStack(stackTrace: stackTrace);
-      rethrow;
-    }
-
-    if (raw == null || raw.isEmpty) {
-      return <TreeRecord>[];
-    }
-
-    late final dynamic decoded;
-
-    try {
-      decoded = jsonDecode(raw);
-    } on FormatException catch (error) {
-      throw FormatException(
-        'Saved tree data contains invalid JSON: ${error.message}',
-      );
-    }
-
-    if (decoded is! List) {
-      throw const FormatException(
-        'Saved tree data is not a JSON list.',
-      );
+    if (data is! List) {
+      throw const FormatException('Saved tree diary is not a list. Existing data was not changed.');
     }
 
     final records = <TreeRecord>[];
-
-    for (var index = 0; index < decoded.length; index++) {
+    for (var i = 0; i < data.length; i++) {
+      final item = data[i];
+      if (item is! Map) {
+        throw FormatException('Tree record $i is invalid. Existing data was not changed.');
+      }
       try {
-        final item = decoded[index];
-
-        if (item is! Map) {
-          throw const FormatException(
-            'Tree record is not a JSON object.',
-          );
-        }
-
-        final tree = TreeRecord.fromJson(
-          Map<String, dynamic>.from(item),
-        );
-
-        records.add(tree);
+        records.add(TreeRecord.fromJson(Map<String, dynamic>.from(item)));
       } catch (error) {
-        debugPrint(
-          'Skipping invalid tree record at index $index: $error',
-        );
+        throw FormatException('Tree record $i could not be read: $error. Existing data was not changed.');
       }
     }
-
     return records;
   }
 
   Future<void> save(List<TreeRecord> trees) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final encoded = jsonEncode(
-      trees.map((tree) => tree.toJson()).toList(),
-    );
-
-    final success = await prefs.setString(key, encoded);
-
-    if (!success) {
-      throw StateError(
-        'SharedPreferences could not save tree records.',
-      );
+    final json = jsonEncode(trees.map((tree) => tree.toJson()).toList());
+    final ok = await _channel.invokeMethod<bool>('writeTrees', {'value': json});
+    if (ok != true) {
+      throw StateError('Android could not save tree records.');
     }
   }
 }
