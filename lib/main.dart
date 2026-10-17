@@ -91,7 +91,7 @@ class RootScreen extends StatefulWidget {
 class _RootScreenState extends State<RootScreen> {
   final List<TreeRecord> trees = [];
   int selected = 0;
-  bool loaded = false;
+  bool loaded = true;
   @override
   void initState() {
     super.initState();
