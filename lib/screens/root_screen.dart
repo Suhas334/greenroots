@@ -59,17 +59,17 @@ class _RootScreenState extends State<RootScreen> {
         storageReady = true;
         storageError = null;
       });
-    } catch (error) {
-      debugPrint('GreenRoots storage load failed: $error');
+    } } catch (error, stackTrace) {
+  debugPrint('GreenRoots storage load failed: $error');
+  debugPrintStack(stackTrace: stackTrace);
 
-      if (mounted) {
-        setState(() {
-          storageReady = false;
-          storageError =
-              'Could not open saved trees. Tap Retry to reconnect to local storage.';
-        });
-      }
-    } finally {
+  if (mounted) {
+    setState(() {
+      storageReady = false;
+      storageError = 'Storage error:\n$error';
+    });
+  }
+} finally {
       if (mounted) {
         setState(() {
           loaded = true;
